@@ -16,7 +16,11 @@ jobs:
           # go-libp2p fork with quic-go v0.62.0 and webtransport-go v0.13.0
           - kubo_ref: release-v0.43.1
             libp2p_replace: github.com/lidel/go-libp2p@v0.0.0-20260908220143-1ae71762d638
-    name: kubo ${{ matrix.kubo_ref }}${{ matrix.libp2p_replace && ' + go-libp2p fork' || '' }}
+          # same fork, plus the listener advertising flow-control limits
+          - kubo_ref: release-v0.43.1
+            libp2p_replace: github.com/lidel/go-libp2p@v0.0.0-20260908220143-1ae71762d638
+            libp2p_patch: go-libp2p-wt-flowcontrol.patch
+    name: kubo ${{ matrix.kubo_ref }}${{ matrix.libp2p_replace && ' + go-libp2p fork' || '' }}${{ matrix.libp2p_patch && ' + flowcontrol patch' || '' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -31,10 +35,22 @@ jobs:
           go-version-file: kubo/go.mod
 
       - name: Replace go-libp2p
-        if: matrix.libp2p_replace
+        if: matrix.libp2p_replace && !matrix.libp2p_patch
         run: |
           cd kubo
           go mod edit -replace github.com/libp2p/go-libp2p=${{ matrix.libp2p_replace }}
+          go mod tidy
+
+      - name: Replace go-libp2p with a patched checkout
+        if: matrix.libp2p_patch
+        run: |
+          mod=${{ matrix.libp2p_replace }}
+          git clone -q https://github.com/${mod%@*}.git go-libp2p
+          rev=${mod#*@}; rev=${rev##*-}
+          git -C go-libp2p checkout -q "$rev"
+          git -C go-libp2p apply --verbose "$GITHUB_WORKSPACE/${{ matrix.libp2p_patch }}"
+          cd kubo
+          go mod edit -replace github.com/libp2p/go-libp2p=../go-libp2p
           go mod tidy
 
       - name: Build kubo
@@ -45,7 +61,8 @@ jobs:
           export IPFS_PATH="$RUNNER_TEMP/ipfs"
           ./ipfs init --profile=test
           ./ipfs config --json Addresses.Swarm '["/ip4/127.0.0.1/udp/4321/quic-v1/webtransport"]'
-          ./ipfs daemon > daemon.log 2>&1 &
+          mkdir -p "$RUNNER_TEMP/qlog"
+          QLOGDIR="$RUNNER_TEMP/qlog" ./ipfs daemon > daemon.log 2>&1 &
           for _ in $(seq 1 60); do ./ipfs id > /dev/null 2>&1 && break; sleep 1; done
           ./ipfs id -f '<addrs>\n' | grep certhash | head -1 | tee addr.txt
           test -s addr.txt
@@ -70,8 +87,14 @@ jobs:
         if: always()
         run: tail -50 daemon.log
 
+      - name: Stop kubo so qlog files are flushed
+        if: always()
+        run: IPFS_PATH="$RUNNER_TEMP/ipfs" ./ipfs shutdown || true
+
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: daemon-log-${{ matrix.kubo_ref }}${{ matrix.libp2p_replace && '-fork' || '' }}
-          path: daemon.log
+          name: logs-${{ strategy.job-index }}
+          path: |
+            daemon.log
+            ${{ runner.temp }}/qlog

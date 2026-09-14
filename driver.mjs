@@ -37,6 +37,10 @@ try {
   const ua = await driver.executeScript('return navigator.userAgent')
   console.log(`[${browser}] ${ua}`)
   console.log(`[${browser}] ${result || 'TIMEOUT: page reported nothing in 30s'}`)
+  if (!result.startsWith('PASS')) {
+    const pageLog = await driver.executeScript('return document.getElementById("log").textContent')
+    console.log(`[${browser}] page log:\n${pageLog}`)
+  }
 } finally {
   await driver.quit()
   server.close()
