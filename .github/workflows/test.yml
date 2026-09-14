@@ -45,7 +45,8 @@ jobs:
         if: matrix.libp2p_patch
         run: |
           mod=${{ matrix.libp2p_replace }}
-          git clone -q https://github.com/${mod%@*}.git go-libp2p
+          repo=${mod%@*}; repo=${repo#github.com/}
+          git clone -q "https://github.com/$repo.git" go-libp2p
           rev=${mod#*@}; rev=${rev##*-}
           git -C go-libp2p checkout -q "$rev"
           git -C go-libp2p apply --verbose "$GITHUB_WORKSPACE/${{ matrix.libp2p_patch }}"
@@ -56,6 +57,11 @@ jobs:
       - name: Build kubo
         run: cd kubo && go build -o ../ipfs ./cmd/ipfs
 
+      - run: npm install
+
+      - name: Enable SafariDriver
+        run: sudo safaridriver --enable
+
       - name: Start kubo with a WebTransport-only listener
         run: |
           export IPFS_PATH="$RUNNER_TEMP/ipfs"
@@ -63,17 +69,13 @@ jobs:
           ./ipfs config --json Addresses.Swarm '["/ip4/127.0.0.1/udp/4321/quic-v1/webtransport"]'
           mkdir -p "$RUNNER_TEMP/qlog"
           QLOGDIR="$RUNNER_TEMP/qlog" ./ipfs daemon > daemon.log 2>&1 &
-          for _ in $(seq 1 60); do ./ipfs id > /dev/null 2>&1 && break; sleep 1; done
+          for _ in $(seq 1 60); do grep -q 'Daemon is ready' daemon.log && break; sleep 1; done
+          grep -q 'Daemon is ready' daemon.log
           ./ipfs id -f '<addrs>\n' | grep certhash | head -1 | tee addr.txt
           test -s addr.txt
 
       - name: Report library versions
         run: cd kubo && go list -m github.com/libp2p/go-libp2p github.com/quic-go/quic-go github.com/quic-go/webtransport-go
-
-      - run: npm install
-
-      - name: Enable SafariDriver
-        run: sudo safaridriver --enable
 
       - name: Dial from Safari
         id: safari
