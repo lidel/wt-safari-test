@@ -1,0 +1,65 @@
+name: Safari WebTransport vs kubo
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  dial:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        kubo_ref: [v0.43.0, release-v0.43.1]
+    name: kubo ${{ matrix.kubo_ref }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ipfs/kubo
+          ref: ${{ matrix.kubo_ref }}
+          path: kubo
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: kubo/go.mod
+
+      - name: Build kubo
+        run: cd kubo && go build -o ../ipfs ./cmd/ipfs
+
+      - name: Start kubo with a WebTransport-only listener
+        run: |
+          export IPFS_PATH="$RUNNER_TEMP/ipfs"
+          ./ipfs init --profile=test
+          ./ipfs config --json Addresses.Swarm '["/ip4/127.0.0.1/udp/4321/quic-v1/webtransport"]'
+          ./ipfs daemon > daemon.log 2>&1 &
+          for _ in $(seq 1 60); do ./ipfs id > /dev/null 2>&1 && break; sleep 1; done
+          ./ipfs id -f '<addrs>\n' | grep certhash | head -1 | tee addr.txt
+          test -s addr.txt
+
+      - name: Report library versions
+        run: cd kubo && go list -m github.com/libp2p/go-libp2p github.com/quic-go/quic-go github.com/quic-go/webtransport-go
+
+      - run: npm install
+
+      - name: Enable SafariDriver
+        run: sudo safaridriver --enable
+
+      - name: Dial from Safari
+        id: safari
+        run: node driver.mjs safari "$(cat addr.txt)"
+
+      - name: Dial from Chrome (harness check)
+        if: always()
+        run: node driver.mjs chrome "$(cat addr.txt)"
+
+      - name: Server log
+        if: always()
+        run: tail -50 daemon.log
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: daemon-log-${{ matrix.kubo_ref }}
+          path: daemon.log

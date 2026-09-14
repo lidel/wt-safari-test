@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebTransport dial</title>
+<pre id="log"></pre>
+<pre id="result"></pre>
+<script type="module">
+// Dials a kubo WebTransport listener the way js-libp2p does: the multiaddr's
+// certhashes become serverCertificateHashes, and the URL is the libp2p
+// well-known path. Writes PASS or FAIL into #result for driver.mjs.
+const log = m => { document.getElementById('log').textContent += m + '\n' }
+const done = m => { document.getElementById('result').textContent = m }
+
+const addr = new URLSearchParams(location.search).get('addr') ?? ''
+const parts = addr.split('/')
+const ip = parts[parts.indexOf('ip4') + 1]
+const port = parts[parts.indexOf('udp') + 1]
+const certhashes = parts.flatMap((p, i) => p === 'certhash' ? [parts[i + 1]] : [])
+
+// multibase 'u' prefix = base64url, no padding; the value is a multihash and
+// the two leading bytes (0x12 0x20) name sha2-256 with a 32-byte digest.
+function certhashBytes (mb) {
+  if (mb[0] !== 'u') throw new Error(`unexpected multibase prefix in ${mb}`)
+  const b64 = mb.slice(1).replace(/-/g, '+').replace(/_/g, '/')
+  const bin = atob(b64 + '='.repeat((4 - b64.length % 4) % 4))
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0))
+  return bytes.slice(2)
+}
+
+try {
+  if (!ip || !port || certhashes.length === 0) throw new Error(`cannot parse multiaddr: ${addr}`)
+  const url = `https://${ip}:${port}/.well-known/libp2p-webtransport?type=noise`
+  const serverCertificateHashes = certhashes.map(h => ({ algorithm: 'sha-256', value: certhashBytes(h) }))
+  log(`dialing ${url} with ${serverCertificateHashes.length} certhash(es)`)
+
+  const wt = new WebTransport(url, { serverCertificateHashes })
+  wt.closed.then(
+    info => log(`closed: code=${info.closeCode} reason=${JSON.stringify(info.reason)}`),
+    err => log(`closed with error: ${err.name}: ${err.message}`)
+  )
+  await wt.ready
+  log('ready')
+  const stream = await wt.createBidirectionalStream()
+  log('bidirectional stream opened')
+  const writer = stream.writable.getWriter()
+  await writer.write(new Uint8Array([0]))
+  log('wrote 1 byte')
+  done('PASS ready, bidi stream, write')
+} catch (err) {
+  done(`FAIL ${err.name}: ${err.message}`)
+}
+</script>

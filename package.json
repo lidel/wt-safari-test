@@ -1,0 +1,8 @@
+{
+  "name": "wt-safari-test",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "selenium-webdriver": "^4.30.0"
+  }
+}
