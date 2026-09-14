@@ -10,8 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kubo_ref: [v0.43.0, release-v0.43.1]
-    name: kubo ${{ matrix.kubo_ref }}
+        include:
+          - kubo_ref: v0.43.0
+          - kubo_ref: release-v0.43.1
+          # go-libp2p fork with quic-go v0.62.0 and webtransport-go v0.13.0
+          - kubo_ref: release-v0.43.1
+            libp2p_replace: github.com/lidel/go-libp2p@v0.0.0-20260908220143-1ae71762d638
+    name: kubo ${{ matrix.kubo_ref }}${{ matrix.libp2p_replace && ' + go-libp2p fork' || '' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -24,6 +29,13 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: kubo/go.mod
+
+      - name: Replace go-libp2p
+        if: matrix.libp2p_replace
+        run: |
+          cd kubo
+          go mod edit -replace github.com/libp2p/go-libp2p=${{ matrix.libp2p_replace }}
+          go mod tidy
 
       - name: Build kubo
         run: cd kubo && go build -o ../ipfs ./cmd/ipfs
@@ -61,5 +73,5 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: daemon-log-${{ matrix.kubo_ref }}
+          name: daemon-log-${{ matrix.kubo_ref }}${{ matrix.libp2p_replace && '-fork' || '' }}
           path: daemon.log
